@@ -43,20 +43,22 @@ QPushButton:hover { background-color: #4674a2; }
 class NextcloudAPI:
     def __init__(self, url, user, password):
         url = url.strip().rstrip('/')
+        
+        # ЕСЛИ ПОЛЬЗОВАТЕЛЬ НЕ НАПИСАЛ HTTP/HTTPS, ПОДСТАВЛЯЕМ HTTPS
         if not url.startswith("http"):
             url = "https://" + url
-        
+            
         self.base_url = url
         self.auth = (user, password)
         
-        # --- МАСКИРОВКА ПОД БРАУЗЕР ---
+        # Маскируемся под браузер
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'OCS-APIRequest': 'true',
             'Accept': 'application/json'
         }
         
-        # Используем путь, который подтвердил curl
+        # Используем путь, подтвержденный через curl
         self.api_prefix = "/index.php/ocs/v2.php/apps/spreed/api/v1"
 
     def get_rooms(self):
@@ -65,12 +67,13 @@ class NextcloudAPI:
             # verify=False - игнорируем ошибки сертификата
             r = requests.get(endpoint, auth=self.auth, headers=self.headers, timeout=15, verify=False)
             
-            # Если сервер ответил 401, значит мы достучались, но пароль не тот
             if r.status_code == 401:
-                return None, "Ошибка 401: Неверный пароль!\n\nОбязательно создайте 'Пароль приложения' в настройках Nextcloud (Безопасность -> Устройства)."
+                return None, "Ошибка 401: Неверный пароль!\nПроверьте логин и используйте App Password."
             
             if r.status_code == 404:
-                 return None, f"Ошибка 404: Сервер не нашел API по адресу:\n{endpoint}\n\nПопробуйте открыть этот адрес в браузере. Если там ошибка - проблема в сервере."
+                 # ВОТ ЗДЕСЬ МЫ СМОТРИМ, КТО ОТВЕТИЛ 404
+                 response_text = r.text[:500] # Берем первые 500 символов ответа
+                 return None, f"Ошибка 404 (Не найдено).\n\nАдрес: {endpoint}\n\nОТВЕТ СЕРВЕРА (Покажите это разработчику):\n{response_text}"
 
             r.raise_for_status()
             return r.json()['ocs']['data'], None
@@ -119,15 +122,18 @@ class LoginWindow(QWidget):
         self.resize(400, 350)
         l = QVBoxLayout()
         
-        self.url = QLineEdit(); self.url.setText("cloud.sk-technologies.org")
+        self.url = QLineEdit()
+        # По умолчанию ставим ваш домен
+        self.url.setText("cloud.sk-technologies.org")
+        
         self.user = QLineEdit(); self.user.setPlaceholderText("Логин")
         self.pwd = QLineEdit(); self.pwd.setPlaceholderText("Пароль приложения")
         self.pwd.setEchoMode(QLineEdit.EchoMode.Password)
         self.btn = QPushButton("Войти")
         
-        l.addWidget(QLabel("Сервер:")); l.addWidget(self.url)
+        l.addWidget(QLabel("Сервер (попробуйте http:// если https не работает):")); l.addWidget(self.url)
         l.addWidget(QLabel("Логин:")); l.addWidget(self.user)
-        l.addWidget(QLabel("Пароль:")); l.addWidget(self.pwd)
+        l.addWidget(QLabel("Пароль приложения:")); l.addWidget(self.pwd)
         l.addWidget(self.btn); l.addStretch()
         self.setLayout(l); self.btn.clicked.connect(self.do_login)
 
@@ -135,7 +141,6 @@ class LoginWindow(QWidget):
         self.btn.setEnabled(False); self.btn.setText("Вход...")
         QApplication.processEvents()
         
-        # ВАЖНО: Убедитесь, что используете именно "Пароль приложения"
         api = NextcloudAPI(self.url.text(), self.user.text(), self.pwd.text())
         rooms, error = api.get_rooms()
         
