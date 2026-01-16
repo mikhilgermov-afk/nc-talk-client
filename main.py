@@ -23,8 +23,10 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTextEdit, QScrollBar)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
+# Отключаем предупреждения SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# --- СТИЛИ ---
 STYLESHEET = """
 QMainWindow { background-color: #17212b; }
 QWidget { color: #f5f5f5; font-family: 'Segoe UI', sans-serif; font-size: 14px; }
@@ -47,67 +49,29 @@ class NextcloudAPI:
         self.base_url = url
         self.auth = (user, password)
         self.headers = {'OCS-APIRequest': 'true', 'Accept': 'application/json'}
-        self.working_prefix = None # Сюда мы запишем найденный путь
-
-    def _find_working_endpoint(self):
-        """Перебирает варианты путей, чтобы найти рабочий API"""
         
-        # Варианты путей, которые бывают в Nextcloud
-        candidates = [
-            "/ocs/v2.php/apps/spreed/api/v1",           # Стандарт
-            "/index.php/ocs/v2.php/apps/spreed/api/v1", # Без rewrite rules
-            "/nextcloud/ocs/v2.php/apps/spreed/api/v1", # В подпапке
-            "/index.php/apps/spreed/api/v1"             # Прямой доступ к приложению
-        ]
-
-        print(f"Ищу API на сервере: {self.base_url}")
-        
-        last_error = ""
-        
-        for prefix in candidates:
-            endpoint = f"{self.base_url}{prefix}/room"
-            try:
-                # verify=False для самоподписанных сертификатов
-                r = requests.get(endpoint, auth=self.auth, headers=self.headers, timeout=5, verify=False)
-                
-                print(f"Проверка {endpoint} -> Код {r.status_code}")
-                
-                # Если 200 (ОК) или 401 (Требует пароль, значит путь верный)
-                if r.status_code == 200:
-                    self.working_prefix = prefix
-                    return r.json()['ocs']['data'], None
-                elif r.status_code == 401:
-                    return None, "Ошибка 401: Пароль не подходит (но сервер найден!)"
-                elif r.status_code == 404:
-                    continue # Ищем дальше
-                else:
-                    last_error = f"Ошибка HTTP {r.status_code} по адресу {endpoint}"
-            except Exception as e:
-                last_error = f"Ошибка соединения: {e}"
-        
-        return None, f"Не удалось найти API Talk.\nПоследняя ошибка: {last_error}\n\nПробовали варианты:\n" + "\n".join(candidates)
+        # МЫ ЗНАЕМ ТОЧНЫЙ ПУТЬ БЛАГОДАРЯ CURL!
+        # Используем /index.php/ocs/v2.php...
+        self.api_prefix = "/index.php/ocs/v2.php/apps/spreed/api/v1"
 
     def get_rooms(self):
-        # Если мы еще не знаем правильный путь, ищем его
-        if not self.working_prefix:
-            data, error = self._find_working_endpoint()
-            if error: return None, error
-            # Если _find_working_endpoint вернул данные, значит он уже сходил за комнатами
-            if data is not None: return data, None
-        
-        # Если путь уже известен
-        endpoint = f"{self.base_url}{self.working_prefix}/room"
+        endpoint = f"{self.base_url}{self.api_prefix}/room"
         try:
             r = requests.get(endpoint, auth=self.auth, headers=self.headers, timeout=10, verify=False)
+            
+            # Если 401 - значит пароль не тот
+            if r.status_code == 401:
+                return None, "Ошибка 401: Неверный пароль.\n\nВАЖНО: Создайте 'Пароль приложения' в настройках Nextcloud (Безопасность -> Устройства) и используйте его."
+            
             r.raise_for_status()
             return r.json()['ocs']['data'], None
+            
         except Exception as e:
-            return None, str(e)
+            return None, f"Ошибка соединения:\n{str(e)}"
 
     def get_messages(self, token):
-        if not self.working_prefix: return []
         try:
-            endpoint = f"{self.base_url}{self.working_prefix}/chat/{token}"
+            endpoint = f"{self.base_url}{self.api_prefix}/chat/{token}"
             r = requests.get(endpoint, auth=self.auth, headers=self.headers, timeout=5, verify=False)
             if r.status_code == 200:
                 return list(reversed(r.json()['ocs']['data']))
@@ -116,9 +80,8 @@ class NextcloudAPI:
             return []
 
     def send_message(self, token, text):
-        if not self.working_prefix: return False
         try:
-            endpoint = f"{self.base_url}{self.working_prefix}/chat/{token}"
+            endpoint = f"{self.base_url}{self.api_prefix}/chat/{token}"
             r = requests.post(endpoint, auth=self.auth, headers=self.headers, json={'message': text}, verify=False)
             return r.status_code == 201
         except:
@@ -144,24 +107,28 @@ class LoginWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Вход")
-        self.resize(350, 300)
+        self.resize(400, 350)
         l = QVBoxLayout()
+        
         self.url = QLineEdit(); self.url.setText("cloud.sk-technologies.org")
         self.user = QLineEdit(); self.user.setPlaceholderText("Логин")
-        self.pwd = QLineEdit(); self.pwd.setPlaceholderText("Пароль")
+        self.pwd = QLineEdit(); self.pwd.setPlaceholderText("Пароль приложения (App Password)")
         self.pwd.setEchoMode(QLineEdit.EchoMode.Password)
         self.btn = QPushButton("Войти")
+        
         l.addWidget(QLabel("Сервер:")); l.addWidget(self.url)
         l.addWidget(QLabel("Логин:")); l.addWidget(self.user)
-        l.addWidget(QLabel("Пароль:")); l.addWidget(self.pwd)
+        l.addWidget(QLabel("Пароль (Создайте App Password в настройках!):")); l.addWidget(self.pwd)
         l.addWidget(self.btn); l.addStretch()
         self.setLayout(l); self.btn.clicked.connect(self.do_login)
 
     def do_login(self):
-        self.btn.setEnabled(False); self.btn.setText("Поиск сервера...")
+        self.btn.setEnabled(False); self.btn.setText("Вход...")
         QApplication.processEvents()
+        
         api = NextcloudAPI(self.url.text(), self.user.text(), self.pwd.text())
         rooms, error = api.get_rooms()
+        
         if rooms is not None:
             self.main_window = ChatWindow(api, rooms, self.user.text())
             self.main_window.show(); self.close()
@@ -179,6 +146,7 @@ class ChatWindow(QMainWindow):
         c = QWidget(); self.setCentralWidget(c)
         l = QHBoxLayout(c); l.setContentsMargins(0,0,0,0)
         split = QSplitter(Qt.Orientation.Horizontal)
+        
         self.list = QListWidget(); self.list.setFixedWidth(280)
         for r in rooms:
             name = r.get('displayName') or r.get('name') or "Chat"
@@ -186,6 +154,7 @@ class ChatWindow(QMainWindow):
             self.list.addItem(it)
         self.list.itemClicked.connect(self.open_chat)
         split.addWidget(self.list)
+        
         right = QWidget(); rl = QVBoxLayout(right); rl.setContentsMargins(0,0,0,0); rl.setSpacing(0)
         self.head = QLabel("Чат"); self.head.setStyleSheet("padding: 15px; font-weight: bold; border-bottom: 1px solid #000;")
         self.chat = QTextEdit(); self.chat.setReadOnly(True)
@@ -193,6 +162,7 @@ class ChatWindow(QMainWindow):
         self.inp = QLineEdit(); btn = QPushButton("➤"); btn.setFixedWidth(40)
         self.inp.returnPressed.connect(self.send); btn.clicked.connect(self.send)
         il.addWidget(self.inp); il.addWidget(btn)
+        
         rl.addWidget(self.head); rl.addWidget(self.chat); rl.addWidget(inp_box)
         split.addWidget(right); l.addWidget(split); split.setSizes([280, 720])
 
