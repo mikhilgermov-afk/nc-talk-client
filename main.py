@@ -5,9 +5,8 @@ import urllib3
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, 
                              QPushButton, QLabel, QSplitter, QMessageBox, 
-                             QTextEdit, QAbstractItemView)
+                             QTextEdit, QScrollBar) # <--- QScrollBar теперь здесь
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QScrollBar
 
 # Отключаем предупреждения о небезопасном HTTPS (так как мы разрешаем self-signed)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
